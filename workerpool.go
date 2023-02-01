@@ -246,25 +246,23 @@ type poolTask struct {
 }
 
 func NewTask(ctx context.Context, fn func() error, timeout ...time.Duration) *poolTask {
-	cancel := defaultCancel
+	var (
+		cancel func()
+		done   chan struct{}
+	)
 
 	if len(timeout) > 0 {
 		ctx, cancel = context.WithTimeout(ctx, timeout[0])
+		done = make(chan struct{})
 	}
 
 	return &poolTask{
 		task:   fn,
 		Err:    make(chan error, 1),
-		done:   make(chan struct{}),
+		done:   done,
 		ctx:    ctx,
 		cancel: cancel,
 	}
-}
-
-type Options func(context.Context) context.Context
-
-func defaultCancel() {
-	return
 }
 
 var ErrTimeout = errors.New("timeout")
@@ -272,24 +270,29 @@ var ErrTimeout = errors.New("timeout")
 // worker executes tasks and stops when it receives a nil task.
 func worker(task *poolTask, workerQueue chan *poolTask, wg *sync.WaitGroup) {
 	for task != nil && task.task != nil {
-		var err error
-
-		done := task.done
-
-		go func() {
-			err = task.task()
-			close(done)
-		}()
-
-		select {
-		case <-done:
-			task.Err <- err
-			task.cancel()
-
+		if task.cancel == nil {
+			task.Err <- task.task()
 			task = <-workerQueue
-		case <-task.ctx.Done():
-			task.Err <- ErrTimeout
-			task.cancel()
+		} else {
+			var err error
+
+			done := task.done
+
+			go func() {
+				err = task.task()
+				close(done)
+			}()
+
+			select {
+			case <-done:
+				task.Err <- err
+				task.cancel()
+
+				task = <-workerQueue
+			case <-task.ctx.Done():
+				task.Err <- ErrTimeout
+				task.cancel()
+			}
 		}
 	}
 	wg.Done()

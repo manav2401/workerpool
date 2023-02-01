@@ -1,11 +1,12 @@
 package pacer
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/gammazero/workerpool"
+	"github.com/JekaMas/workerpool"
 )
 
 func TestPacedWorkers(t *testing.T) {
@@ -26,20 +27,22 @@ func TestPacedWorkers(t *testing.T) {
 	tasksDone.Add(20)
 	start := time.Now()
 
-	pacedTask := pacer.Pace(func() {
+	pacedTask := pacer.Pace(func() error {
 		//fmt.Println("Task")
 		tasksDone.Done()
+		return nil
 	})
 
-	slowPacedTask := slowPacer.Pace(func() {
+	slowPacedTask := slowPacer.Pace(func() error {
 		//fmt.Println("SlowTask")
 		tasksDone.Done()
+		return nil
 	})
 
 	// Cause worker to be created, and available for reuse before next task.
 	for i := 0; i < 10; i++ {
-		wp.Submit(pacedTask)
-		wp.Submit(slowPacedTask)
+		wp.Submit(context.Background(), pacedTask)
+		wp.Submit(context.Background(), slowPacedTask)
 	}
 
 	time.Sleep(500 * time.Millisecond)

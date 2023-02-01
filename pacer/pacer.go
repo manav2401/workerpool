@@ -7,7 +7,6 @@ same time.
 The pacer package is independent of the workerpool package. Paced functions can
 be submitted to a workerpool or can be run as goroutines, and execution will be
 paced in both cases.
-
 */
 package pacer
 
@@ -24,16 +23,16 @@ import "time"
 // routine. Paced functions, that are run as goroutines, are also paced. For
 // example:
 //
-//     pacer := pacer.NewPacer(time.Second)
+//	pacer := pacer.NewPacer(time.Second)
 //
-//     pacedTask := pacer.Pace(func() {
-//         fmt.Println("Hello World")
-//     })
+//	pacedTask := pacer.Pace(func() {
+//	    fmt.Println("Hello World")
+//	})
 //
-//     wp := workerpool.New(5)
-//     wp.Submit(pacedTask)
+//	wp := workerpool.New(5)
+//	wp.Submit(pacedTask)
 //
-//     go pacedTask()
+//	go pacedTask()
 //
 // NOTE: Do not call Pacer.Stop() until all paced tasks have completed, or
 // paced tasks will hang waiting for pacer to unblock them.
@@ -60,10 +59,10 @@ func NewPacer(delay time.Duration) *Pacer {
 // Pace wraps a function in a paced function. The returned paced function can
 // then be submitted to the workerpool, using Submit or SubmitWait, and
 // starting the tasks is paced according to the pacer's delay.
-func (p *Pacer) Pace(task func()) func() {
-	return func() {
+func (p *Pacer) Pace(task func() error) func() error {
+	return func() error {
 		p.Next()
-		task()
+		return task()
 	}
 }
 
