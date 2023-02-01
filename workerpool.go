@@ -251,7 +251,7 @@ func NewTask(ctx context.Context, fn func() error, timeout ...time.Duration) *po
 		done   chan struct{}
 	)
 
-	if len(timeout) > 0 {
+	if len(timeout) > 0 && timeout[0] > 0 {
 		ctx, cancel = context.WithTimeout(ctx, timeout[0])
 		done = make(chan struct{})
 	}
