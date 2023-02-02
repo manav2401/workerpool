@@ -13,6 +13,7 @@ import (
 const (
 	// If workes idle for at least this period of time, then stop a worker.
 	idleTimeout = 2 * time.Second
+	NoTimeout   = 0
 )
 
 // New creates and starts a pool of worker goroutines.
@@ -28,8 +29,8 @@ func New(maxWorkers int) *WorkerPool {
 
 	pool := &WorkerPool{
 		maxWorkers:  maxWorkers,
-		taskQueue:   make(chan *poolTask),
-		workerQueue: make(chan *poolTask),
+		taskQueue:   make(chan poolTask),
+		workerQueue: make(chan poolTask),
 		stopSignal:  make(chan struct{}),
 		stoppedChan: make(chan struct{}),
 	}
@@ -44,11 +45,11 @@ func New(maxWorkers int) *WorkerPool {
 // goroutines processing requests does not exceed the specified maximum.
 type WorkerPool struct {
 	maxWorkers   int
-	taskQueue    chan *poolTask
-	workerQueue  chan *poolTask
+	taskQueue    chan poolTask
+	workerQueue  chan poolTask
 	stoppedChan  chan struct{}
 	stopSignal   chan struct{}
-	waitingQueue deque.Deque[*poolTask]
+	waitingQueue deque.Deque[poolTask]
 	stopLock     sync.Mutex
 	stopOnce     sync.Once
 	stopped      bool
@@ -105,9 +106,9 @@ func (p *WorkerPool) Stopped() bool {
 // period until there are no more idle workers. Since the time to start new
 // goroutines is not significant, there is no need to retain idle workers
 // indefinitely.
-func (p *WorkerPool) Submit(ctx context.Context, fn func() error, timeout ...time.Duration) <-chan error {
+func (p *WorkerPool) Submit(ctx context.Context, fn func() error, timeout time.Duration) <-chan error {
 	if fn != nil {
-		t := NewTask(ctx, fn, timeout...)
+		t := NewTask(ctx, fn, timeout)
 		p.taskQueue <- t
 		return t.Err
 	}
@@ -119,11 +120,11 @@ func (p *WorkerPool) Submit(ctx context.Context, fn func() error, timeout ...tim
 }
 
 // SubmitWait enqueues the given function and waits for it to be executed.
-func (p *WorkerPool) SubmitWait(ctx context.Context, fn func() error, timeout ...time.Duration) error {
+func (p *WorkerPool) SubmitWait(ctx context.Context, fn func() error, timeout time.Duration) error {
 	if fn == nil {
 		return nil
 	}
-	t := NewTask(ctx, fn, timeout...)
+	t := NewTask(ctx, fn, timeout)
 	p.taskQueue <- t
 	return <-t.Err
 }
@@ -148,20 +149,25 @@ func (p *WorkerPool) WaitingQueueSize() int {
 func (p *WorkerPool) Pause(ctx context.Context) {
 	p.stopLock.Lock()
 	defer p.stopLock.Unlock()
+
 	if p.stopped {
 		return
 	}
+
 	ready := new(sync.WaitGroup)
 	ready.Add(p.maxWorkers)
+
+	innerCtx := context.Background()
+
 	for i := 0; i < p.maxWorkers; i++ {
-		p.Submit(context.Background(), func() error {
+		p.Submit(innerCtx, func() error {
 			ready.Done()
 			select {
 			case <-ctx.Done():
 			case <-p.stopSignal:
 			}
 			return nil
-		})
+		}, NoTimeout)
 	}
 	// Wait for workers to all be paused
 	ready.Wait()
@@ -229,7 +235,7 @@ Loop:
 
 	// Stop all remaining workers as they become ready.
 	for workerCount > 0 {
-		p.workerQueue <- nil
+		p.workerQueue <- NewTask(nil, nil)
 		workerCount--
 	}
 	wg.Wait()
@@ -245,7 +251,7 @@ type poolTask struct {
 	cancel context.CancelFunc
 }
 
-func NewTask(ctx context.Context, fn func() error, timeout ...time.Duration) *poolTask {
+func NewTask(ctx context.Context, fn func() error, timeout ...time.Duration) poolTask {
 	var (
 		cancel func()
 		done   chan struct{}
@@ -256,7 +262,7 @@ func NewTask(ctx context.Context, fn func() error, timeout ...time.Duration) *po
 		done = make(chan struct{})
 	}
 
-	return &poolTask{
+	return poolTask{
 		task:   fn,
 		Err:    make(chan error, 1),
 		done:   done,
@@ -268,24 +274,29 @@ func NewTask(ctx context.Context, fn func() error, timeout ...time.Duration) *po
 var ErrTimeout = errors.New("timeout")
 
 // worker executes tasks and stops when it receives a nil task.
-func worker(task *poolTask, workerQueue chan *poolTask, wg *sync.WaitGroup) {
-	for task != nil && task.task != nil {
+func worker(task poolTask, workerQueue chan poolTask, wg *sync.WaitGroup) {
+	errCh := make(chan error, 1)
+	tasks := make(chan poolTask, 1)
+
+	defer close(tasks)
+
+	go func() {
+		for execTask := range tasks {
+			errCh <- execTask.task()
+			close(execTask.done)
+		}
+	}()
+
+	for task.task != nil {
 		if task.cancel == nil {
 			task.Err <- task.task()
 			task = <-workerQueue
 		} else {
-			var err error
-
-			done := task.done
-
-			go func() {
-				err = task.task()
-				close(done)
-			}()
+			tasks <- task
 
 			select {
-			case <-done:
-				task.Err <- err
+			case <-task.done:
+				task.Err <- <-errCh
 				task.cancel()
 
 				task = <-workerQueue
@@ -339,7 +350,7 @@ func (p *WorkerPool) processWaitingQueue() bool {
 
 func (p *WorkerPool) killIdleWorker() bool {
 	select {
-	case p.workerQueue <- nil:
+	case p.workerQueue <- NewTask(nil, nil):
 		// Sent kill signal to worker.
 		return true
 	default:

@@ -41,8 +41,8 @@ func TestPacedWorkers(t *testing.T) {
 
 	// Cause worker to be created, and available for reuse before next task.
 	for i := 0; i < 10; i++ {
-		wp.Submit(context.Background(), pacedTask)
-		wp.Submit(context.Background(), slowPacedTask)
+		wp.Submit(context.Background(), pacedTask, workerpool.NoTimeout)
+		wp.Submit(context.Background(), slowPacedTask, workerpool.NoTimeout)
 	}
 
 	time.Sleep(500 * time.Millisecond)
