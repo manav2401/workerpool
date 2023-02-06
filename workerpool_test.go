@@ -752,7 +752,6 @@ func TestExampleTimeouted1(t *testing.T) {
 	}
 }
 
-// todo: to be fixed
 func TestMaxWorkersTimeouted1(t *testing.T) {
 	defer goleak.VerifyNone(t)
 
