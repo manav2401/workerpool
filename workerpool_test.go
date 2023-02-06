@@ -2,6 +2,7 @@ package workerpool
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -768,34 +769,28 @@ func TestMaxWorkersTimeouted1(t *testing.T) {
 		t.Fatal("wrong size returned")
 	}
 
-	started := make(chan struct{}, max)
-	release := make(chan struct{})
+	started := make(chan error, max)
 
 	// Start workers, and have them all wait on a channel before completing.
 	for i := 0; i < max; i++ {
-		wp.Submit(context.Background(), func() error {
-			started <- struct{}{}
-			<-release
-			return nil
+		started <- <-wp.Submit(context.Background(), func() error {
+			return errors.New("should not happened")
 		}, time.Nanosecond)
 	}
 
-	// Wait for all queued tasks to be dispatched to workers.
-	if wp.waitingQueue.Len() != wp.WaitingQueueSize() {
-		t.Fatal("Working Queue size returned should not be 0")
-	}
 	timeout := time.After(5 * time.Second)
 	for startCount := 0; startCount < max; {
 		select {
-		case <-started:
+		case err := <-started:
+			if !errors.Is(err, ErrTimeout) {
+				t.Fatalf("expected ErrTimeout, got %v", err)
+			}
+
 			startCount++
 		case <-timeout:
 			t.Fatal("timed out waiting for workers to start")
 		}
 	}
-
-	// Release workers.
-	close(release)
 }
 
 func TestReuseWorkersTimeouted(t *testing.T) {
