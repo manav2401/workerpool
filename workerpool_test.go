@@ -31,11 +31,16 @@ func TestExample(t *testing.T) {
 
 	close(rspChan)
 	rspSet := map[string]struct{}{}
+	var responceCount int
 	for rsp := range rspChan {
 		rspSet[rsp] = struct{}{}
+		responceCount++
 	}
-	if len(rspSet) < len(requests) {
+	if responceCount < len(requests) {
 		t.Fatal("Did not handle all requests")
+	}
+	if len(rspSet) > len(requests) {
+		t.Fatal("handled some of the requests more then once")
 	}
 	for _, req := range requests {
 		if _, ok := rspSet[req]; !ok {
@@ -644,11 +649,16 @@ func TestExampleTimeouted(t *testing.T) {
 
 	close(rspChan)
 	rspSet := map[string]struct{}{}
+	var responceCount int
 	for rsp := range rspChan {
 		rspSet[rsp] = struct{}{}
+		responceCount++
 	}
-	if len(rspSet) < len(requests) {
+	if responceCount < len(requests) {
 		t.Fatal("Did not handle all requests")
+	}
+	if len(rspSet) > len(requests) {
+		t.Fatal("handled some of the requests more then once")
 	}
 	for _, req := range requests {
 		if _, ok := rspSet[req]; !ok {
@@ -683,6 +693,91 @@ func TestMaxWorkersTimeouted(t *testing.T) {
 			<-release
 			return nil
 		}, defaultTimeout)
+	}
+
+	// Wait for all queued tasks to be dispatched to workers.
+	if wp.waitingQueue.Len() != wp.WaitingQueueSize() {
+		t.Fatal("Working Queue size returned should not be 0")
+	}
+	timeout := time.After(5 * time.Second)
+	for startCount := 0; startCount < max; {
+		select {
+		case <-started:
+			startCount++
+		case <-timeout:
+			t.Fatal("timed out waiting for workers to start")
+		}
+	}
+
+	// Release workers.
+	close(release)
+}
+
+func TestExampleTimeouted1(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	wp := New(2)
+	requests := []string{"alpha", "beta", "gamma", "delta", "epsilon"}
+
+	rspChan := make(chan string, len(requests))
+	for _, r := range requests {
+		r := r
+		respErr := wp.Submit(context.Background(), func() error {
+			return nil
+		}, time.Nanosecond)
+		<-respErr
+		rspChan <- r
+	}
+
+	wp.StopWait()
+
+	close(rspChan)
+	rspSet := map[string]struct{}{}
+	var responceCount int
+	for rsp := range rspChan {
+		rspSet[rsp] = struct{}{}
+		responceCount++
+	}
+	if responceCount < len(requests) {
+		t.Fatal("Did not handle all requests")
+	}
+	if len(rspSet) > len(requests) {
+		t.Fatal("handled some of the requests more then once")
+	}
+	for _, req := range requests {
+		if _, ok := rspSet[req]; !ok {
+			t.Fatal("Missing expected values:", req)
+		}
+	}
+}
+
+// todo: to be fixed
+func TestMaxWorkersTimeouted1(t *testing.T) {
+	defer goleak.VerifyNone(t)
+
+	wp := New(0)
+	wp.Stop()
+	if wp.maxWorkers != 1 {
+		t.Fatal("should have created one worker")
+	}
+
+	wp = New(max)
+	defer wp.Stop()
+
+	if wp.Size() != max {
+		t.Fatal("wrong size returned")
+	}
+
+	started := make(chan struct{}, max)
+	release := make(chan struct{})
+
+	// Start workers, and have them all wait on a channel before completing.
+	for i := 0; i < max; i++ {
+		wp.Submit(context.Background(), func() error {
+			started <- struct{}{}
+			<-release
+			return nil
+		}, time.Nanosecond)
 	}
 
 	// Wait for all queued tasks to be dispatched to workers.

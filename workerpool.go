@@ -282,7 +282,14 @@ func worker(task poolTask, workerQueue chan poolTask, wg *sync.WaitGroup) {
 
 	go func() {
 		for execTask := range tasks {
-			errCh <- execTask.task()
+			err := execTask.task()
+
+			select {
+			case <-execTask.ctx.Done():
+			case execTask.Err <- err:
+			default:
+			}
+
 			close(execTask.done)
 		}
 	}()
@@ -294,16 +301,18 @@ func worker(task poolTask, workerQueue chan poolTask, wg *sync.WaitGroup) {
 		} else {
 			tasks <- task
 
+			var err error
+
 			select {
 			case <-task.done:
-				task.Err <- <-errCh
-				task.cancel()
-
-				task = <-workerQueue
+				err = <-errCh
 			case <-task.ctx.Done():
-				task.Err <- ErrTimeout
-				task.cancel()
+				err = ErrTimeout
 			}
+
+			task.Err <- err
+			task.cancel()
+			task = <-workerQueue
 		}
 	}
 	wg.Done()
