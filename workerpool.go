@@ -211,7 +211,7 @@ Loop:
 			// Got a task to do.
 			select {
 			case p.workerQueue <- task:
-				fmt.Println("*** free worker, picking task")
+				fmt.Println("*** free worker, picking task, workerCount", p.workerCount.Load())
 			default:
 				// Create a new worker, if not at max.
 				if int(p.workerCount.Load()) < p.maxWorkers {
