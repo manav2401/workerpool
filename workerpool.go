@@ -3,6 +3,7 @@ package workerpool
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -216,6 +217,7 @@ Loop:
 					wg.Add(1)
 					go worker(task, p.workerQueue, &wg)
 					p.workerCount.Add(1)
+					fmt.Println("*** incrementing worker count:", p.workerCount.Load())
 				} else {
 					// Enqueue task to be executed by next available worker.
 					p.waitingQueue.PushBack(task)
