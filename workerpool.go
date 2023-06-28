@@ -211,6 +211,7 @@ Loop:
 			// Got a task to do.
 			select {
 			case p.workerQueue <- task:
+				fmt.Println("*** free worker, picking task")
 			default:
 				// Create a new worker, if not at max.
 				if int(p.workerCount.Load()) < p.maxWorkers {
@@ -231,6 +232,7 @@ Loop:
 			if idle && int(p.workerCount.Load()) > 0 {
 				if p.killIdleWorker() {
 					p.workerCount.Add(-1)
+					fmt.Println("*** decrementing worker count 1")
 				}
 			}
 			idle = true
@@ -247,6 +249,7 @@ Loop:
 	for int(p.workerCount.Load()) > 0 {
 		p.workerQueue <- NewTask(nil, nil)
 		p.workerCount.Add(-1)
+		fmt.Println("*** decrementing worker count 2")
 	}
 	wg.Wait()
 
