@@ -45,6 +45,7 @@ func New(maxWorkers int) *WorkerPool {
 // goroutines processing requests does not exceed the specified maximum.
 type WorkerPool struct {
 	maxWorkers   int
+	workerCount  atomic.Int64
 	taskQueue    chan poolTask
 	workerQueue  chan poolTask
 	stoppedChan  chan struct{}
@@ -134,6 +135,11 @@ func (p *WorkerPool) WaitingQueueSize() int {
 	return int(atomic.LoadInt32(&p.waiting))
 }
 
+// GetWorkerCount returns the number of workers serving requests currently.
+func (p *WorkerPool) GetWorkerCount() int64 {
+	return p.workerCount.Load()
+}
+
 // Pause causes all workers to wait on the given Context, thereby making them
 // unavailable to run tasks. Pause returns when all workers are waiting. Tasks
 // can continue to be queued to the workerpool, but are not executed until the
@@ -177,9 +183,11 @@ func (p *WorkerPool) Pause(ctx context.Context) {
 func (p *WorkerPool) dispatch() {
 	defer close(p.stoppedChan)
 	timeout := time.NewTimer(idleTimeout)
-	var workerCount int
-	var idle bool
-	var wg sync.WaitGroup
+	var (
+		idle bool
+		wg   sync.WaitGroup
+	)
+	p.workerCount.Store(0)
 
 Loop:
 	for {
@@ -204,10 +212,10 @@ Loop:
 			case p.workerQueue <- task:
 			default:
 				// Create a new worker, if not at max.
-				if workerCount < p.maxWorkers {
+				if int(p.workerCount.Load()) < p.maxWorkers {
 					wg.Add(1)
 					go worker(task, p.workerQueue, &wg)
-					workerCount++
+					p.workerCount.Add(1)
 				} else {
 					// Enqueue task to be executed by next available worker.
 					p.waitingQueue.PushBack(task)
@@ -218,9 +226,9 @@ Loop:
 		case <-timeout.C:
 			// Timed out waiting for work to arrive. Kill a ready worker if
 			// pool has been idle for a whole timeout.
-			if idle && workerCount > 0 {
+			if idle && int(p.workerCount.Load()) > 0 {
 				if p.killIdleWorker() {
-					workerCount--
+					p.workerCount.Add(-1)
 				}
 			}
 			idle = true
@@ -234,9 +242,9 @@ Loop:
 	}
 
 	// Stop all remaining workers as they become ready.
-	for workerCount > 0 {
+	for int(p.workerCount.Load()) > 0 {
 		p.workerQueue <- NewTask(nil, nil)
-		workerCount--
+		p.workerCount.Add(-1)
 	}
 	wg.Wait()
 
