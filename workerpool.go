@@ -138,6 +138,7 @@ func (p *WorkerPool) WaitingQueueSize() int {
 
 // GetWorkerCount returns the number of workers serving requests currently.
 func (p *WorkerPool) GetWorkerCount() int64 {
+	fmt.Println("*** GetWorkerCount():", p.workerCount.Load())
 	return p.workerCount.Load()
 }
 
