@@ -38,8 +38,19 @@ func New(maxWorkers int) *WorkerPool {
 
 	// Start the task dispatcher.
 	go pool.dispatch()
+	go pool.loop()
 
 	return pool
+}
+
+func (p *WorkerPool) loop() {
+	timer := time.NewTicker(1 * time.Second)
+	for {
+		select {
+		case <-timer.C:
+			fmt.Println("*** loop", p.workerCount.Load())
+		}
+	}
 }
 
 // WorkerPool is a collection of goroutines, where the number of concurrent
